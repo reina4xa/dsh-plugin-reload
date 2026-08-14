@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-reload",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A DeepSeek Harness plugin: model-facing reload_plugin tool that restarts one Cordis Loader entry (by entry id, module name, or MCP serverName) without touching sibling entries — respawns mcp-client server processes",
   "type": "module",
   "main": "./lib/index.js",
