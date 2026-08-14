@@ -1,0 +1,7 @@
+# dsh bundle patch: mounts the reload_plugin tool as a profile layer.
+# When this package is added to a profile via `dsh plugin --profile <name> add dsh-plugin-reload`,
+# the `dsh.bundle` declaration makes it join `dsh.profile.bundles` and this file inserts the
+# plugin entry automatically — no manual cordis.patch.yml edit needed.
+- insert:
+    - id: plugin-reload
+      name: 'dsh-plugin-reload'
