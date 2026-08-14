@@ -1,0 +1,57 @@
+{
+  "name": "dsh-plugin-reload",
+  "version": "0.1.0",
+  "description": "A DeepSeek Harness plugin: model-facing reload_plugin tool that restarts one Cordis Loader entry (by entry id, module name, or MCP serverName) without touching sibling entries — respawns mcp-client server processes",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./invariant": {
+      "types": "./lib/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "plugin",
+    "mcp",
+    "reload"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/cordis-plugin-loader": ">=1.0.2",
+    "@deepseek-ai/dsh-invariants": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/cordis-plugin-loader": ">=1.0.2",
+    "@deepseek-ai/dsh-invariants": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.10"
+  }
+}
