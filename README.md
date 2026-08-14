@@ -1,24 +1,38 @@
 # dsh-plugin-reload
 
+English | [中文](README.zh.md)
+
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that gives the agent a **`reload_plugin` tool**: restart exactly one Cordis Loader entry — matched by entry id, module name, or MCP `serverName` — by disposing its fiber and re-applying the plugin with unchanged config. Every other entry keeps running.
 
 Reloading an `mcp-client` entry respawns that MCP server child process (picking up new server code on disk) and re-registers its tools; sibling MCP connections are not affected.
 
 > Built on the "everything is a plugin" architecture of DeepSeek Harness. The official repository does not accept external pull requests at the moment — per [CONTRIBUTING.md](https://github.com/deepseek-ai/deepseek-harness/blob/HEAD/CONTRIBUTING.md), community plugins are published independently and shared under the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic.
 
-## Install
+## Install (auto-mount)
+
+Since **v0.1.2** the package declares a `dsh.bundle`, so a single command installs the plugin **and** automatically mounts it:
 
 ```sh
-# install the plugin into your web profile (pnpm manages the profile)
 dsh plugin --profile web add dsh-plugin-reload
-
-# or install it wherever you keep dsh profile dependencies
-npm install dsh-plugin-reload
 ```
 
-## Mount
+What happens under the hood:
 
-Add an insert row to your profile patch (`~/.dsh/profiles/<name>/cordis.patch.yml`, or a `--patch` overlay):
+1. `dsh plugin` runs `pnpm add` inside the profile directory (`~/.dsh/profiles/<name>/`).
+2. On success it reconciles the profile manifest: because `dsh-plugin-reload` declares `dsh.bundle` in its `package.json`, it is appended to the profile's `dsh.profile.bundles` layer list.
+3. On the next harness start the bundle layer is composed, and the plugin's own `cordis.patch.yml` inserts the `plugin-reload` entry — the tool appears in the model's tool list with **no manual patch editing**.
+
+To pick up a later version:
+
+```sh
+dsh plugin --profile web update dsh-plugin-reload
+```
+
+> Freshly published versions may be held back briefly by pnpm's `minimumReleaseAge` supply-chain policy; an explicit version (`dsh plugin --profile web add dsh-plugin-reload@0.1.x`) bypasses it.
+
+## Manual mount (alternative)
+
+If you install the package with plain `npm` (not via `dsh plugin`), or prefer an explicit patch row, add it to your profile patch (`~/.dsh/profiles/<name>/cordis.patch.yml`, or a `--patch` overlay):
 
 ```yaml
 - insert:
@@ -26,7 +40,7 @@ Add an insert row to your profile patch (`~/.dsh/profiles/<name>/cordis.patch.ym
       name: 'dsh-plugin-reload'
 ```
 
-Restart the harness (or let profile-patch HMR pick it up). The `reload_plugin` tool then appears in the model's tool list.
+Restart the harness (or let profile-patch HMR pick it up). Keep either the bundle mount or the manual row — not both (a duplicate tool registration fails at load).
 
 ## Usage
 
@@ -56,6 +70,7 @@ A successful reload returns the entry id, module, optional `serverName`, previou
 ```sh
 npm install        # dev deps (types + typescript) from npm
 npm run build      # tsc → lib/
+npm test           # vitest
 npm pack           # inspect the tarball before publishing
 ```
 
