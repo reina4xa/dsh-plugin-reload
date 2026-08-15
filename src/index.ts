@@ -156,6 +156,20 @@ const cacheDelete = (cache: unknown, url: string): void => {
   ;(Map.prototype.delete as (this: unknown, key: string) => unknown).call(cache, url)
 }
 
+/**
+ * Extract the ModuleJob for a URL from the internal loadCache, across loader
+ * shapes: Node 22/23 stores the job directly, while Node 24+ stores a
+ * `{ [type]: ModuleJob }` slot object per URL (type e.g. `'javascript'`).
+ */
+function moduleJobOf(slot: unknown): ModuleJob | undefined {
+  if (slot === undefined || slot === null || typeof slot !== 'object') return undefined
+  const record = slot as Record<string, unknown>
+  if ('linked' in record || 'url' in record) return slot as ModuleJob
+  const candidate = record.javascript ?? record.commonjs ?? record.module
+    ?? Object.values(record)[0]
+  return candidate as ModuleJob | undefined
+}
+
 /** Resolve a module specifier to its file URL (Node 22/23 vs 24+ loader shapes). */
 async function resolveEntryUrl(internal: ModuleLoader, specifier: string, parentURL: string): Promise<string> {
   if (internal.version === 'v2') {
@@ -199,10 +213,19 @@ async function collectLocalModules(
     if (seen.has(url)) return
     seen.add(url)
     if (url.startsWith('node:')) return
-    const underPackage = packageRoot !== undefined && url.startsWith(packageRoot)
-    if (url.includes('/node_modules/') && !underPackage) return
+    // Only the plugin's own files are reloaded. When the entry lives inside a
+    // package (its URL has a node_modules/<name> boundary), keep everything
+    // under that package root and drop the rest — dependencies resolve to
+    // arbitrary paths (e.g. a host checkout) and must never be busted. For a
+    // source-tree entry (no node_modules boundary) drop any node_modules
+    // children, mirroring cordis-plugin-hmr's dependency walk.
+    if (packageRoot !== undefined) {
+      if (!url.startsWith(packageRoot)) return
+    } else if (url.includes('/node_modules/')) {
+      return
+    }
     files.add(url)
-    const job = cacheGet(loadCache, url) as ModuleJob | undefined
+    const job = moduleJobOf(cacheGet(loadCache, url))
     if (!job) return
     const children = await job.linked
     await Promise.all(Array.from(children, child => walk(child.url)))
