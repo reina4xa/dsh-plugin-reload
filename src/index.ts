@@ -443,17 +443,20 @@ export function apply(ctx: Context): void {
         await entry.fiber.restart()
       }
       const reloaded = summarize(entry as unknown as EntryLike)
-      return {
+      // serverName only exists for mcp-client entries; an undefined value in
+      // the returned object is not lossless JSON and would fail validation.
+      const result: Record<string, unknown> = {
         reloaded: reloaded.entryId,
         module: reloaded.module,
-        serverName: reloaded.serverName,
         previousPhase,
         phase: reloaded.phase,
         strategy,
         note: strategy === 'hard'
           ? 'Module caches were busted and the entry was re-imported from disk (fresh code); only this entry restarted.'
           : 'The entry fiber was disposed and re-applied with unchanged config; only this entry restarted.',
-      } as unknown as JsonValue
+      }
+      if (reloaded.serverName !== undefined) result.serverName = reloaded.serverName
+      return result as unknown as JsonValue
     },
   }))
 }
