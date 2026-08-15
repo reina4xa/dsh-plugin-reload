@@ -2,9 +2,12 @@
 
 English | [中文](README.zh.md)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that gives the agent a **`reload_plugin` tool**: restart exactly one Cordis Loader entry — matched by entry id, module name, or MCP `serverName` — by disposing its fiber and re-applying the plugin with unchanged config. Every other entry keeps running.
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that gives the agent a **`reload_plugin` tool**: restart exactly one Cordis Loader entry — matched by entry id, module name, or MCP `serverName`. Every other entry keeps running.
 
-Reloading an `mcp-client` entry respawns that MCP server child process (picking up new server code on disk) and re-registers its tools; sibling MCP connections are not affected.
+Two reload strategies are chosen per entry kind:
+
+- **`mcp-client` entries** respawn the MCP server child process on restart (picking up new server code on disk) and re-register its tools; sibling MCP connections are not affected.
+- **in-process plugin entries** get a **hard reload**: the Node ESM/CJS module caches for the entry and its local source files are busted, the entry is re-imported from disk, and its fibers are swapped onto the fresh module — the same technique `cordis-plugin-hmr`'s partial reload uses. Plugin code changes take effect **without restarting the host**, and a failed re-import or re-apply rolls back to the previous code.
 
 > Built on the "everything is a plugin" architecture of DeepSeek Harness. The official repository does not accept external pull requests at the moment — per [CONTRIBUTING.md](https://github.com/deepseek-ai/deepseek-harness/blob/HEAD/CONTRIBUTING.md), community plugins are published independently and shared under the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic.
 
@@ -49,11 +52,12 @@ Restart the harness (or let profile-patch HMR pick it up). Keep either the bundl
 | Argument | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Entry id (preferred), module name, or MCP `config.serverName` of the entry to reload |
-| `dry_run` | no | `true` reports the single matched entry without restarting it |
+| `mode` | no | `auto` (default) — hard reload for in-process plugins, fiber restart for mcp-client; `soft` — dispose and re-apply only (never picks up in-process code changes); `hard` — bust ESM/CJS caches and re-import the entry code from disk |
+| `dry_run` | no | `true` reports the single matched entry and the strategy that would run, without restarting it |
 
 Matching walks the Loader's non-group entries once: exact entry id first, then module name, then mcp-client `serverName`. Zero matches fail with a bounded list of available entries; multiple matches fail listing the candidate entry ids and change nothing. Group entries never match — restarting a subtree requires one call per leaf entry.
 
-A successful reload returns the entry id, module, optional `serverName`, previous and current fiber phases, and a fixed semantics note. The reload runs through the fiber's public `restart()` — dispose and immediately reload with the current config — so nothing is written back to the loader config.
+A successful reload returns the entry id, module, optional `serverName`, previous and current fiber phases, the strategy used, and a semantics note. A hard reload writes nothing back to the loader config: the entry's options stay untouched, only its fiber is swapped onto the re-imported module.
 
 ## Requirements
 
@@ -63,6 +67,7 @@ A successful reload returns the entry id, module, optional `serverName`, previou
 
 - **Brief tool outage during reload** — the reloaded entry's contributions (e.g. MCP tools) are unregistered between disposal and re-application; in-flight calls to those tools fail.
 - **No group reload** — restarting a whole plugin subtree must be requested per leaf entry.
+- **Hard reload covers the plugin's own code only** — dependencies in `node_modules` (e.g. `@deepseek-ai/*`, `ws`) are intentionally not re-imported; changing those still requires a host restart. Module-level state of the reloaded plugin is re-evaluated (a fresh `import`), so plugins must not rely on top-level persistent state surviving a reload.
 - **Agent-facing only** — no browser/UI surface; the Settings plugin-inventory tab stays read-only.
 
 ## Development

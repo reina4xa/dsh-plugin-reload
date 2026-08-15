@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-reload",
-  "version": "0.1.3",
-  "description": "A DeepSeek Harness plugin: model-facing reload_plugin tool that restarts one Cordis Loader entry (by entry id, module name, or MCP serverName) without touching sibling entries — respawns mcp-client server processes",
+  "version": "0.2.0",
+  "description": "A DeepSeek Harness plugin: model-facing reload_plugin tool that restarts one Cordis Loader entry (by entry id, module name, or MCP serverName) without touching sibling entries — respawns mcp-client server processes and hard-reloads in-process plugin code (ESM/CJS cache bust + fiber swap)",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -58,6 +58,7 @@
     "@deepseek-ai/dsh-invariants": ">=0.0.1-rc.1",
     "@deepseek-ai/dsh-system-prompt": "^0.0.1-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1",
+    "@types/node": "^25.0.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.10"
   },
