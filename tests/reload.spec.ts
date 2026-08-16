@@ -53,6 +53,11 @@ describe('plugin-reload', () => {
 
   it('reloads exactly one entry matched by id and leaves siblings running', async () => {
     const { ctx, tool } = await harness()
+    // hard reload 需要 internal module loader（--expose-internals 或
+    // node-addon-require-builtin）；无 flag 的测试环境跳过 hard 路径断言，
+    // 用 soft 模式验证"恰好重启一个 entry"的隔离语义。
+    const internal = (ctx.loader as { internal?: unknown }).internal
+    const mode = internal ? 'auto' : 'soft'
     const watched: FixtureCounter = { applies: 0, disposes: 0 }
     const other: FixtureCounter = { applies: 0, disposes: 0 }
     ctx.loader.builtins.watched = countingPlugin(watched)
@@ -62,7 +67,7 @@ describe('plugin-reload', () => {
     expect(watched.applies).toBe(1)
     expect(other.applies).toBe(1)
 
-    const result = await tool.execute({ name: watchedId }, stubExecution) as Record<string, unknown>
+    const result = await tool.execute({ name: watchedId, mode }, stubExecution) as Record<string, unknown>
     expect(result.reloaded).toBe(watchedId)
     expect(result.previousPhase).toBe('active')
     expect(result.phase).toBe('active')
@@ -109,6 +114,57 @@ describe('plugin-reload', () => {
       /no plugin entry matches "nope"[\s\S]*cordis:watched/,
     )
     expect(id).toBeTruthy()
+  })
+
+  it('matches an MCP serverName with _ and - normalized (umetask-http == umetask_http)', async () => {
+    const { ctx, tool } = await harness()
+    const counter: FixtureCounter = { applies: 0, disposes: 0 }
+    ctx.loader.builtins.mcp = countingPlugin(counter)
+    const id = await ctx.loader.create({
+      name: 'cordis:mcp',
+      config: { serverName: 'umetask_http', transport: 'streamable-http' },
+    })
+
+    // 连字符写法应命中下划线 serverName（归一化匹配）
+    const result = await tool.execute({ name: 'umetask-http', dry_run: true }, stubExecution) as Record<string, unknown>
+    expect((result.wouldReload as Record<string, unknown>).entryId).toBe(id)
+    expect((result.wouldReload as Record<string, unknown>).serverName).toBe('umetask_http')
+  })
+
+  it('prefers the exact-id match over a fuzzy sibling when both would hit', async () => {
+    const { ctx, tool } = await harness()
+    const counter: FixtureCounter = { applies: 0, disposes: 0 }
+    ctx.loader.builtins.mcp = countingPlugin(counter)
+    const first = await ctx.loader.create({
+      name: 'cordis:mcp',
+      config: { serverName: 'umetask', transport: 'stdio' },
+    })
+    const second = await ctx.loader.create({
+      name: 'cordis:mcp',
+      config: { serverName: 'umetask_http', transport: 'streamable-http' },
+    })
+
+    // "umetask" 精确命中 serverName=umetask（100 档），不会因子串撞上 umetask_http
+    const result = await tool.execute({ name: 'umetask', dry_run: true }, stubExecution) as Record<string, unknown>
+    expect((result.wouldReload as Record<string, unknown>).entryId).toBe(first)
+    void second
+  })
+
+  it('matchScore: bare entry id beats the include:-prefixed spelling tier-wise', async () => {
+    // 纯函数单测：entry id 带 include: 前缀时，"mcp-umetask" 应命中 90 档
+    // （裸 id），而不是落到 60 档子串；精确 module/serverName 仍 100 档优先。
+    const { matchScore } = await import('../src/index.ts')
+    const summary = {
+      entryId: 'include:mcp-umetask',
+      module: '@deepseek-ai/dsh-mcp-client',
+      serverName: 'umetask',
+      phase: 'active',
+    }
+    expect(matchScore(summary, 'include:mcp-umetask')).toBe(100)   // 精确 entry id
+    expect(matchScore(summary, 'mcp-umetask')).toBe(90)            // 裸 id（去前缀）
+    expect(matchScore(summary, 'umetask')).toBe(100)               // 精确 serverName
+    expect(matchScore(summary, 'umetask_http')).toBe(0)            // 无关
+    expect(matchScore(summary, 'mcp')).toBe(60)                    // 子串兜底
   })
 
   it('fails on an ambiguous module name and demands an exact entry id', async () => {

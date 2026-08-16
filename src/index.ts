@@ -80,11 +80,6 @@ interface ReloadableEntry extends EntryLike {
 }
 
 /** One matched entry paired with its projected summary. */
-interface ReloadMatch {
-  entry: ReloadableEntry
-  summary: EntrySummary
-}
-
 /** Reload strategy requested or applied. */
 type ReloadMode = 'auto' | 'soft' | 'hard'
 type ReloadStrategy = 'soft' | 'hard'
@@ -122,6 +117,67 @@ function formatCandidates(entries: EntrySummary[], total: number): string {
   const lines = listed.map(e => `- ${e.entryId} (module: ${e.module}${e.serverName ? `, serverName: ${e.serverName}` : ''}, phase: ${e.phase})`)
   if (total > listed.length) lines.push(`- ... and ${total - listed.length} more`)
   return lines.join('\n')
+}
+
+/**
+ * Normalize a matching key: lowercase and treat `_`/`-`/`.` as equivalent
+ * separators, so `umetask_http`, `umetask-http` and `umetask.http` all
+ * address the same MCP serverName.
+ */
+function normalizeKey(s: string): string {
+  return s.toLowerCase().replace(/[-_.]+/g, '-')
+}
+
+/** Strip the loader group prefix (`include:`, `cordis:`, …) off an entry id. */
+function bareId(id: string): string {
+  const idx = id.indexOf(':')
+  return idx === -1 ? id : id.slice(idx + 1)
+}
+
+/** Last path segment of a module name (`@scope/pkg` → `pkg`). */
+function bareModule(name: string): string {
+  const idx = name.lastIndexOf('/')
+  return idx === -1 ? name : name.slice(idx + 1)
+}
+
+/**
+ * Match strength of one entry against a query. 0 = no match; larger is more
+ * precise. Tiers (exact wins over fuzzy, so `mcp-umetask` targets the
+ * `include:`-prefixed entry instead of also hitting the `-http` sibling):
+ *   100 — exact entry id / module name / serverName
+ *    90 — bare entry id (group prefix stripped)
+ *    80 — normalized serverName / bare module name
+ *    60 — substring (≥3 chars to stay useful)
+ */
+/** Exported for unit testing; internal matching logic lives here. */
+export function matchScore(entry: EntrySummary, query: string): number {
+  const q = query.trim()
+  if (!q) return 0
+  const normQ = normalizeKey(q)
+  const serverName = entry.serverName
+  if (entry.entryId === q || entry.module === q || (serverName !== undefined && serverName === q)) {
+    return 100
+  }
+  if (bareId(entry.entryId) === q) return 90
+  if (serverName !== undefined && normalizeKey(serverName) === normQ) return 80
+  if (bareModule(entry.module) === q) return 80
+  if (q.length >= 3) {
+    const normId = normalizeKey(entry.entryId)
+    const normModule = normalizeKey(entry.module)
+    if (normId.includes(normQ) || normModule.includes(normQ)
+        || (serverName !== undefined && normalizeKey(serverName).includes(normQ))) {
+      return 60
+    }
+  }
+  return 0
+}
+
+/** Render the "no match" hint: what the caller could pass instead. */
+function noMatchHint(query: string): string {
+  return `reload_plugin: no plugin entry matches "${query}". `
+    + 'Try an entry id (with or without the "include:" prefix), a module name, '
+    + 'or an MCP serverName (e.g. "umetask_http"; "_" and "-" are equivalent). '
+    + 'Use dry_run=true to preview.'
 }
 
 /**
@@ -378,19 +434,22 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'reload_plugin',
     description:
-      'Restart one Cordis plugin entry, matched by exact entry id (preferred), module name, or MCP serverName '
-      + '(for mcp-client entries). Only the matched entry restarts; all other plugins and MCP connections keep '
-      + 'running. For an mcp-client entry this respawns the MCP server child process, picking up new server code '
-      + 'on disk, and re-registers its tools; tools of the reloaded entry are unavailable for a few seconds. For '
-      + 'an in-process plugin entry this hard-reloads its code: the ESM/CJS module caches are busted and the entry '
-      + 'is re-imported from disk, so plugin code changes take effect without restarting the host (a failed reload '
-      + 'rolls back to the previous code). Group entries cannot be reloaded as a whole — target a leaf entry. Use '
-      + 'dry_run to preview the match and strategy without restarting.',
+      'Restart one Cordis plugin entry. Matching is flexible: an exact entry id, module name, or MCP serverName '
+      + 'wins; otherwise a bare entry id (with the "include:" prefix stripped), a normalized serverName '
+      + '(`_`/`-` equivalent, e.g. "umetask_http" == "umetask-http"), or a ≥3-char substring also matches. '
+      + 'If several entries match at the same precision the call fails with the candidates listed — pass an '
+      + 'exact id/serverName to disambiguate. Only the matched entry restarts; all other plugins and MCP '
+      + 'connections keep running. For an mcp-client entry this respawns the MCP server child process, picking '
+      + 'up new server code on disk, and re-registers its tools; tools of the reloaded entry are unavailable for '
+      + 'a few seconds. For an in-process plugin entry this hard-reloads its code: the ESM/CJS module caches are '
+      + 'busted and the entry is re-imported from disk, so plugin code changes take effect without restarting the '
+      + 'host (a failed reload rolls back to the previous code). Group entries cannot be reloaded as a whole — '
+      + 'target a leaf entry. Use dry_run to preview the match and strategy without restarting.',
     parameters: {
       name: {
         type: 'string',
         required: true,
-        description: 'Entry id, module name, or MCP serverName of the single plugin entry to reload.',
+        description: 'Entry id (with or without "include:" prefix), module name, or MCP serverName of the single plugin entry to reload.',
       },
       mode: {
         type: 'string',
@@ -414,31 +473,34 @@ export function apply(ctx: Context): void {
       const mode: ReloadMode = args.mode ?? 'auto'
 
       const available: EntrySummary[] = []
-      const matches: ReloadMatch[] = []
+      // 按匹配强度排序的候选：同一强度内若有多个命中 → 歧义报错
+      const scored: Array<{ entry: ReloadableEntry; summary: EntrySummary; score: number }> = []
       for (const entry of ctx.loader.entries()) {
         if (entry.options.group) continue
         const summary = summarize(entry as unknown as EntryLike)
         available.push(summary)
-        if (entry.id === query || entry.options.name === query || summary.serverName === query) {
-          matches.push({ entry, summary })
-        }
+        const score = matchScore(summary, query)
+        if (score > 0) scored.push({ entry, summary, score })
       }
 
-      if (matches.length === 0) {
+      if (scored.length === 0) {
         throw new Error(
-          `reload_plugin: no plugin entry matches "${query}". Available entries (${available.length}):\n`
+          noMatchHint(query) + ` Available entries (${available.length}):\n`
           + formatCandidates(available, available.length),
         )
       }
-      if (matches.length > 1) {
+      // 最高强度分；同分多个 → 歧义，要求更精确的 id / serverName
+      const bestScore = Math.max(...scored.map(m => m.score))
+      const best = scored.filter(m => m.score === bestScore)
+      if (best.length > 1) {
         throw new Error(
-          `reload_plugin: "${query}" matches ${matches.length} plugin entries — re-run with an exact entry id:\n`
-          + formatCandidates(matches.map(m => m.summary), matches.length),
+          `reload_plugin: "${query}" matches ${best.length} plugin entries at the same precision `
+          + `— re-run with an exact entry id or an MCP serverName:\n`
+          + formatCandidates(best.map(m => m.summary), best.length),
         )
       }
 
-      // length 0 and >1 both threw above; exactly one match remains.
-      const { entry, summary } = matches[0] as ReloadMatch
+      const { entry, summary } = best[0] as { entry: ReloadableEntry; summary: EntrySummary }
       const strategy = reloadStrategy(entry, mode)
       if (args.dry_run === true) {
         return {
